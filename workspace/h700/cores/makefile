@@ -129,6 +129,7 @@ bluemsx_MAKEFILE = Makefile.libretro
 gearcoleco_REPO = https://github.com/drhelius/Gearcoleco.git
 gearcoleco_CORE = gearcoleco_libretro.so
 gearcoleco_BUILD_PATH = gearcoleco/platforms/libretro
+gearcoleco_HASH = 8783ebd83c5cfca12cbc88558c701b56063c9f04
 
 ###############################
 
