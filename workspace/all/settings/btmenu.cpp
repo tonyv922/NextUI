@@ -182,28 +182,27 @@ void Menu::updater()
                     if (rateItem) items.push_back(rateItem);
                     layout_called = false;
 
-                    // paired devices first, directly under the toggles
-                    for (auto &[s, r] : pairedMap)
+                    // "Connect Bluetooth" entry: drill into the paired device list,
+                    // where A connects/disconnects a device directly.
+                    // Rebuilt on every refresh tick so the count stays live.
+                    std::string entryName = pairedMap.empty()
+                                                ? std::string("Connect Bluetooth")
+                                                : "Connect Bluetooth (" + std::to_string(pairedMap.size()) + ")";
+                    MenuList *pairedOptions;
+                    if (pairedMap.empty())
                     {
-                        MenuList *options;
-                        if (r.is_connected)
-                        {
-                            options = new MenuList(MenuItemType::List, "Options", {
-                                                                                    new DisconnectKnownItem(r, selectionDirty),
-                                                                                    new UnpairItem(r, selectionDirty),
-                                                                                });
-                        }
-                        else
-                        {
-                            options = new MenuList(MenuItemType::List, "Options", {
-                                                                                    new ConnectKnownItem(r, selectionDirty),
-                                                                                    new UnpairItem(r, selectionDirty),
-                                                                                });
-                        }
-                        auto itm = new PairedItem{r, options};
-                        itm->setDesc(std::string(r.remote_addr) + " | " + std::to_string(r.rssi));
-                        items.push_back(itm);
+                        pairedOptions = new MenuList(MenuItemType::List, entryName, {
+                            new MenuItem(ListItemType::Button, "No paired devices", "Pair a device from the list below first."),
+                        });
                     }
+                    else
+                    {
+                        std::vector<AbstractMenuItem *> quickItems;
+                        for (auto &[s, r] : pairedMap)
+                            quickItems.push_back(new QuickConnectItem(r, selectionDirty));
+                        pairedOptions = new MenuList(MenuItemType::List, entryName, quickItems);
+                    }
+                    items.push_back(new MenuItem(ListItemType::Button, entryName, "Paired devices - press A to connect", DeferToSubmenu, pairedOptions));
 
                     // then scan results, skipping anything already paired (match by MAC)
                     for (auto &[s, r] : scanMap)
@@ -390,4 +389,61 @@ void PairedItem::drawCustomItem(SDL_Surface *surface, const SDL_Rect &dst, const
     text = TTF_RenderUTF8_Blended(font.small, item.getName().c_str(), text_color);
     SDL_BlitSurfaceCPP(text, {}, surface, {dst.x + SCALE1(OPTION_PADDING), dst.y + SCALE1(1)});
     SDL_FreeSurface(text);
+}
+
+///////////////////////////////////////////////////////////
+// "Connect Bluetooth" submenu rows
+
+QuickConnectItem::QuickConnectItem(BT_devicePaired d, bool &dirty)
+    : MenuItem(ListItemType::Button, "", "", nullptr, nullptr), dev(d), dirty(dirty)
+{
+    baseName = dev.remote_name[0] ? std::string(dev.remote_name) : std::string(dev.remote_addr);
+    refreshName();
+}
+
+void QuickConnectItem::refreshName()
+{
+    name = baseName + (dev.is_connected ? " (connected)" : "");
+    desc = std::string(dev.remote_addr) + " | A: " + (dev.is_connected ? "disconnect" : "connect");
+}
+
+InputReactionHint QuickConnectItem::handleInput(int &dirtyFlag)
+{
+    if (PAD_justPressed(BTN_A))
+    {
+        if (dev.is_connected)
+        {
+            BT_disconnect(dev.remote_addr);
+        }
+        else
+        {
+            ScopedOverlay overlay("Connecting...");
+            BT_connect(dev.remote_addr);
+        }
+        // re-read our own state so the row updates immediately without
+        // leaving the submenu (updater() won't rebuild while it's open)
+        std::vector<BT_devicePaired> kl(SCAN_MAX_RESULTS);
+        int known = BT_pairedDevices(kl.data(), SCAN_MAX_RESULTS);
+        for (int i = 0; i < known; i++)
+        {
+            if (std::string(kl[i].remote_addr) == std::string(dev.remote_addr))
+            {
+                dev = kl[i];
+                break;
+            }
+        }
+        refreshName();
+        dirty = true;
+        dirtyFlag = 1;
+        return NoOp;
+    }
+    else if (PAD_justPressed(BTN_X))
+    {
+        BT_unpair(dev.remote_addr);
+        dirty = true;
+        dirtyFlag = 1;
+        // close the submenu; the main list rebuilds and refreshes the count
+        return Exit;
+    }
+    return MenuItem::handleInput(dirtyFlag);
 }
