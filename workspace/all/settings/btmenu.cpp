@@ -182,14 +182,7 @@ void Menu::updater()
                     if (rateItem) items.push_back(rateItem);
                     layout_called = false;
 
-                    for (auto &[s, r] : scanMap)
-                    {
-                        MenuList *options;
-                        options = new MenuList(MenuItemType::List, "Options", {new PairNewItem(r, selectionDirty)});
-                        auto itm = new PairableItem{r, options};
-                        items.push_back(itm);
-                    }
-
+                    // paired devices first, directly under the toggles
                     for (auto &[s, r] : pairedMap)
                     {
                         MenuList *options;
@@ -209,6 +202,17 @@ void Menu::updater()
                         }
                         auto itm = new PairedItem{r, options};
                         itm->setDesc(std::string(r.remote_addr) + " | " + std::to_string(r.rssi));
+                        items.push_back(itm);
+                    }
+
+                    // then scan results, skipping anything already paired (match by MAC)
+                    for (auto &[s, r] : scanMap)
+                    {
+                        if (pairedMap.count(r.addr))
+                            continue;
+                        MenuList *options;
+                        options = new MenuList(MenuItemType::List, "Options", {new PairNewItem(r, selectionDirty)});
+                        auto itm = new PairableItem{r, options};
                         items.push_back(itm);
                     }
                 }
