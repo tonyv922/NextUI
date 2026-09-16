@@ -43,6 +43,18 @@ static int wake_fd = -1;
 // minarch which loads the same file at startup.
 static int joy_map[JOY_MAP_COUNT];
 static int joy_last_raw = -1;
+
+// Axis bindings share the raw-value space with buttons using a high base:
+// 1000 + axis*2 + (negative direction ? 1 : 0) — see JOY_AXIS_BASE in
+// platform.h. Old files only ever stored button indices (<1000) so
+// persistence stays backward compatible.
+#define JOY_IS_AXIS(r) ((r) >= JOY_AXIS_BASE)
+#define JOY_AXIS_OF(r) (((r) - JOY_AXIS_BASE) >> 1)
+#define JOY_AXIS_NEG(r) (((r) - JOY_AXIS_BASE) & 1)
+#define JOY_TRIG_DEADZONE 12000
+#define JOY_AXIS_SLOTS 16
+static signed char joy_axis_dir[JOY_AXIS_SLOTS]; // last polarity per axis (capture edge)
+
 static const uint32_t joy_map_btn[JOY_MAP_COUNT] = {
 	BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
 	BTN_A, BTN_B, BTN_X, BTN_Y,
@@ -57,6 +69,44 @@ static const int joy_map_id[JOY_MAP_COUNT] = {
 	BTN_ID_SELECT, BTN_ID_START, BTN_ID_MENU, BTN_ID_MENU, BTN_ID_MENU,
 	BTN_ID_PLUS, BTN_ID_MINUS, BTN_ID_POWER,
 };
+
+// user-bound axis -> button events. Consumes the axis when any slot is
+// mapped to it so sticks/triggers never double-fire as RX/RY analog.
+static void apply_button_state(int btn, int id, int pressed, uint32_t tick);
+static int apply_bound_axis(int axis, int val, uint32_t tick) {
+	int bound = 0;
+	for (int slot = 0; slot < JOY_MAP_COUNT; slot++) {
+		int raw = joy_map[slot];
+		if (!JOY_IS_AXIS(raw) || JOY_AXIS_OF(raw) != axis)
+			continue;
+		bound = 1;
+		int pressed = JOY_AXIS_NEG(raw) ? (val < -JOY_TRIG_DEADZONE)
+										: (val >  JOY_TRIG_DEADZONE);
+		apply_button_state(joy_map_btn[slot], joy_map_id[slot], pressed, tick);
+	}
+	return bound;
+}
+
+// capture: remember a fresh axis deflection (edge from center) as a raw id
+static void capture_axis_edge(int axis, int val) {
+	if (axis < 0 || axis >= JOY_AXIS_SLOTS)
+		return;
+	if (val > JOY_TRIG_DEADZONE) {
+		if (joy_axis_dir[axis] != 1) {
+			joy_axis_dir[axis] = 1;
+			joy_last_raw = JOY_AXIS_BASE + axis * 2;
+		}
+	}
+	else if (val < -JOY_TRIG_DEADZONE) {
+		if (joy_axis_dir[axis] != -1) {
+			joy_axis_dir[axis] = -1;
+			joy_last_raw = JOY_AXIS_BASE + axis * 2 + 1;
+		}
+	}
+	else if (val > -4000 && val < 4000) {
+		joy_axis_dir[axis] = 0; // back to center: ready for next edge
+	}
+}
 
 // RGB LEDs hang off an MCU on UART5, gated by the axp2202 mcu_pwr rail.
 // See led.c, which is included at the bottom of this file.
@@ -472,6 +522,10 @@ static void poll_sdl_input(uint32_t tick) {
 		else if (event.type == SDL_JOYAXISMOTION) {
 			int axis = event.jaxis.axis;
 			int val = event.jaxis.value;
+
+			capture_axis_edge(axis, val); // Settings > Joystick capture
+			if (apply_bound_axis(axis, val, tick))
+				continue; // axis consumed as button(s) by user remap
 
 			if (axis == AXIS_L2) {
 				btn = BTN_L2;

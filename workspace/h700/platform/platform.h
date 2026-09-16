@@ -128,6 +128,9 @@ void PLAT_joystickMapSet(int slot, int raw); // bind slot to raw button, persist
 void PLAT_joystickMapRestoreSlot(int slot);  // one slot back to factory default
 void PLAT_joystickMapRestoreAll(void);       // whole table, persists
 int  PLAT_joystickLastRaw(void);          // consume last external-pad raw press (-1 if none)
+// raw id space: <JOY_AXIS_BASE = SDL button index; >= = axis binding
+// JOY_AXIS_BASE + axis*2 (+1 when negative direction fires the button)
+#define JOY_AXIS_BASE 1000
 #ifdef __cplusplus
 }
 #endif
