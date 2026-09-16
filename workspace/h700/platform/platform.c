@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <assert.h>
+#include <string.h>
 
 #include <msettings.h>
 
@@ -35,6 +36,27 @@ int dev_has_rstick = 0;
 int dev_has_rgb = 0;
 int dev_num_leds = 0;
 static int wake_fd = -1;
+
+// external-pad button remap (see platform.h). One table for every external
+// (SDL joystick) pad; the built-in panel keys come in through raw evdev and
+// are deliberately never consulted. Live for the settings UI, persisted for
+// minarch which loads the same file at startup.
+static int joy_map[JOY_MAP_COUNT];
+static int joy_last_raw = -1;
+static const uint32_t joy_map_btn[JOY_MAP_COUNT] = {
+	BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
+	BTN_A, BTN_B, BTN_X, BTN_Y,
+	BTN_L1, BTN_R1, BTN_L2, BTN_R2, BTN_L3, BTN_R3,
+	BTN_SELECT, BTN_START, BTN_MENU, BTN_MENU, BTN_MENU,
+	BTN_PLUS, BTN_MINUS, BTN_POWER,
+};
+static const int joy_map_id[JOY_MAP_COUNT] = {
+	BTN_ID_DPAD_UP, BTN_ID_DPAD_DOWN, BTN_ID_DPAD_LEFT, BTN_ID_DPAD_RIGHT,
+	BTN_ID_A, BTN_ID_B, BTN_ID_X, BTN_ID_Y,
+	BTN_ID_L1, BTN_ID_R1, BTN_ID_L2, BTN_ID_R2, BTN_ID_L3, BTN_ID_R3,
+	BTN_ID_SELECT, BTN_ID_START, BTN_ID_MENU, BTN_ID_MENU, BTN_ID_MENU,
+	BTN_ID_PLUS, BTN_ID_MINUS, BTN_ID_POWER,
+};
 
 // RGB LEDs hang off an MCU on UART5, gated by the axp2202 mcu_pwr rail.
 // See led.c, which is included at the bottom of this file.
@@ -162,29 +184,122 @@ static int button_from_code(int code, int *id) {
 }
 
 static int button_from_joy(int joy, int *id) {
-	     if (joy == JOY_UP)       { *id = BTN_ID_DPAD_UP;    return BTN_DPAD_UP; }
-	else if (joy == JOY_DOWN)     { *id = BTN_ID_DPAD_DOWN;  return BTN_DPAD_DOWN; }
-	else if (joy == JOY_LEFT)     { *id = BTN_ID_DPAD_LEFT;  return BTN_DPAD_LEFT; }
-	else if (joy == JOY_RIGHT)    { *id = BTN_ID_DPAD_RIGHT; return BTN_DPAD_RIGHT; }
-	else if (joy == JOY_A)        { *id = BTN_ID_A;          return BTN_A; }
-	else if (joy == JOY_B)        { *id = BTN_ID_B;          return BTN_B; }
-	else if (joy == JOY_X)        { *id = BTN_ID_X;          return BTN_X; }
-	else if (joy == JOY_Y)        { *id = BTN_ID_Y;          return BTN_Y; }
-	else if (joy == JOY_START)    { *id = BTN_ID_START;      return BTN_START; }
-	else if (joy == JOY_SELECT)   { *id = BTN_ID_SELECT;     return BTN_SELECT; }
-	else if (joy == JOY_MENU)     { *id = BTN_ID_MENU;       return BTN_MENU; }
-	else if (joy == JOY_MENU_ALT) { *id = BTN_ID_MENU;       return BTN_MENU; }
-	else if (joy == JOY_MENU_ALT2){ *id = BTN_ID_MENU;       return BTN_MENU; }
-	else if (joy == JOY_L1)       { *id = BTN_ID_L1;         return BTN_L1; }
-	else if (joy == JOY_L2)       { *id = BTN_ID_L2;         return BTN_L2; }
-	else if (joy == JOY_L3)       { *id = BTN_ID_L3;         return BTN_L3; }
-	else if (joy == JOY_R1)       { *id = BTN_ID_R1;         return BTN_R1; }
-	else if (joy == JOY_R2)       { *id = BTN_ID_R2;         return BTN_R2; }
-	else if (joy == JOY_R3)       { *id = BTN_ID_R3;         return BTN_R3; }
-	else if (joy == JOY_PLUS)     { *id = BTN_ID_PLUS;       return BTN_PLUS; }
-	else if (joy == JOY_MINUS)    { *id = BTN_ID_MINUS;      return BTN_MINUS; }
-	else if (joy == JOY_POWER)    { *id = BTN_ID_POWER;      return BTN_POWER; }
+	// Table-driven so the Settings > Joystick submenu (and minarch via the
+	// persisted file) can remap external-pad buttons. joy < 0 = unbound.
+	for (int slot = 0; slot < JOY_MAP_COUNT; slot++) {
+		int bound = joy_map[slot];
+		if (bound >= 0 && joy == bound) {
+			*id = joy_map_id[slot];
+			return (int)joy_map_btn[slot];
+		}
+	}
 	return BTN_NONE;
+}
+
+static void joy_map_factory(void) {
+	// depends on detect_device() having run (JOY_L3/JOY_R3 are stick-gated)
+	joy_map[JOY_MAP_UP]      = JOY_UP;
+	joy_map[JOY_MAP_DOWN]    = JOY_DOWN;
+	joy_map[JOY_MAP_LEFT]    = JOY_LEFT;
+	joy_map[JOY_MAP_RIGHT]   = JOY_RIGHT;
+	joy_map[JOY_MAP_A]       = JOY_A;
+	joy_map[JOY_MAP_B]       = JOY_B;
+	joy_map[JOY_MAP_X]       = JOY_X;
+	joy_map[JOY_MAP_Y]       = JOY_Y;
+	joy_map[JOY_MAP_L1]      = JOY_L1;
+	joy_map[JOY_MAP_R1]      = JOY_R1;
+	joy_map[JOY_MAP_L2]      = JOY_L2;
+	joy_map[JOY_MAP_R2]      = JOY_R2;
+	joy_map[JOY_MAP_L3]      = JOY_L3;
+	joy_map[JOY_MAP_R3]      = JOY_R3;
+	joy_map[JOY_MAP_SELECT]  = JOY_SELECT;
+	joy_map[JOY_MAP_START]   = JOY_START;
+	joy_map[JOY_MAP_MENU]    = JOY_MENU;
+	joy_map[JOY_MAP_MENU_ALT]  = JOY_MENU_ALT;
+	joy_map[JOY_MAP_MENU_ALT2] = JOY_MENU_ALT2;
+	joy_map[JOY_MAP_PLUS]    = JOY_PLUS;
+	joy_map[JOY_MAP_MINUS]   = JOY_MINUS;
+	joy_map[JOY_MAP_POWER]   = JOY_POWER;
+}
+
+static void joy_map_load(void) {
+	joy_map_factory();
+	char path[MAX_PATH];
+	snprintf(path, sizeof(path), "%s/joymap.txt", USERDATA_PATH);
+	FILE *f = fopen(path, "r");
+	if (!f)
+		return;
+	int slot, raw;
+	while (fscanf(f, "%d %d", &slot, &raw) == 2) {
+		if (slot >= 0 && slot < JOY_MAP_COUNT)
+			joy_map[slot] = raw;
+	}
+	fclose(f);
+}
+
+static void joy_map_save(void) {
+	// best effort: make sure the directory exists before writing
+	mkdir(SDCARD_PATH "/.userdata", 0755);
+	mkdir(USERDATA_PATH, 0755);
+	char path[MAX_PATH];
+	snprintf(path, sizeof(path), "%s/joymap.txt", USERDATA_PATH);
+	FILE *f = fopen(path, "w");
+	if (!f) {
+		LOG_error("failed to write %s: %s\n", path, strerror(errno));
+		return;
+	}
+	for (int slot = 0; slot < JOY_MAP_COUNT; slot++) {
+		if (joy_map[slot] >= 0)
+			fprintf(f, "%d %d\n", slot, joy_map[slot]);
+	}
+	fclose(f);
+}
+
+int PLAT_joystickMapSlotRaw(int slot) {
+	if (slot < 0 || slot >= JOY_MAP_COUNT)
+		return -1;
+	return joy_map[slot];
+}
+
+int PLAT_joystickMapSlotDefault(int slot) {
+	int saved[JOY_MAP_COUNT];
+	memcpy(saved, joy_map, sizeof(saved));
+	joy_map_factory();
+	int out = (slot >= 0 && slot < JOY_MAP_COUNT) ? joy_map[slot] : -1;
+	memcpy(joy_map, saved, sizeof(saved));
+	return out;
+}
+
+void PLAT_joystickMapSet(int slot, int raw) {
+	if (slot < 0 || slot >= JOY_MAP_COUNT)
+		return;
+	// unbind the raw button from any other slot first: one physical button
+	// must not fire two logical buttons
+	for (int i = 0; i < JOY_MAP_COUNT; i++) {
+		if (i != slot && raw >= 0 && joy_map[i] == raw)
+			joy_map[i] = -1;
+	}
+	joy_map[slot] = raw;
+	joy_map_save();
+}
+
+void PLAT_joystickMapRestoreSlot(int slot) {
+	if (slot < 0 || slot >= JOY_MAP_COUNT)
+		return;
+	// compute factory value without clobbering the live table, then rebind
+	// through the normal exclusive path (unbinds conflicts + persists)
+	PLAT_joystickMapSet(slot, PLAT_joystickMapSlotDefault(slot));
+}
+
+void PLAT_joystickMapRestoreAll(void) {
+	joy_map_factory();
+	joy_map_save();
+}
+
+int PLAT_joystickLastRaw(void) {
+	int raw = joy_last_raw;
+	joy_last_raw = -1;
+	return raw;
 }
 
 static void apply_hat_axis(int neg_id, int pos_id, int value, uint32_t tick) {
@@ -284,6 +399,7 @@ static int is_builtin_pad(const char *name) {
 
 void PLAT_initInput(void) {
 	detect_device();
+	joy_map_load(); // after detect_device: factory JOY_L3/R3 are stick-gated
 	for (int i = 0; i < H700_INPUT_COUNT; i++)
 		input_fds[i] = -1;
 	last_input_scan = 0;
@@ -343,6 +459,8 @@ static void poll_sdl_input(uint32_t tick) {
 
 		if (event.type == SDL_JOYBUTTONDOWN || event.type == SDL_JOYBUTTONUP) {
 			pressed = event.type == SDL_JOYBUTTONDOWN;
+			if (pressed)
+				joy_last_raw = event.jbutton.button; // consumed by Settings > Joystick capture
 			btn = button_from_joy(event.jbutton.button, &id);
 		}
 		else if (event.type == SDL_JOYHATMOTION) {

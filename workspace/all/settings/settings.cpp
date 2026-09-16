@@ -27,6 +27,7 @@ extern "C"
 #include "colorpickermenu.hpp"
 #include "palettemenu.hpp"
 #include "fnbuttonmenu.hpp"
+#include "joystickmenu.hpp"
 
 #define BUSYBOX_STOCK_VERSION "1.27.2"
 
@@ -1153,6 +1154,10 @@ int main(int argc, char *argv[])
 
         if(deviceInfo.hasBluetooth())
             mainItems.push_back(new MenuItem{ListItemType::Generic, "Bluetooth", "", {}, {}, nullptr, nullptr, DeferToSubmenu, new Bluetooth::Menu(appQuit, ctx.dirty)});
+
+        MenuList *joystickMenu = buildJoystickMenu(); // nullptr if this platform has no remappable external pad
+        if(joystickMenu)
+            mainItems.push_back(new MenuItem{ListItemType::Generic, "Joystick", "External pad button remap", {}, {}, nullptr, nullptr, DeferToSubmenu, joystickMenu});
 
         mainItems.push_back(new MenuItem{ListItemType::Generic, "About", "", {}, {}, nullptr, nullptr, DeferToSubmenu, aboutMenu});
 
