@@ -55,6 +55,11 @@ static int joy_last_raw = -1;
 #define JOY_AXIS_SLOTS 16
 static signed char joy_axis_dir[JOY_AXIS_SLOTS]; // last polarity per axis (capture edge)
 
+// stick behaviour toggles (see platform.h JOY_OPT_*): invert X, invert Y,
+// left-stick-as-D-pad. Persisted in joymap.txt under slot id
+// JOY_MAP_COUNT + index so one file keeps all external-pad state.
+static int joy_opt[JOY_OPT_COUNT];
+
 static const uint32_t joy_map_btn[JOY_MAP_COUNT] = {
 	BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
 	BTN_A, BTN_B, BTN_X, BTN_Y,
@@ -283,6 +288,8 @@ static void joy_map_load(void) {
 	while (fscanf(f, "%d %d", &slot, &raw) == 2) {
 		if (slot >= 0 && slot < JOY_MAP_COUNT)
 			joy_map[slot] = raw;
+		else if (slot >= JOY_MAP_COUNT && slot < JOY_MAP_COUNT + JOY_OPT_COUNT)
+			joy_opt[slot - JOY_MAP_COUNT] = raw ? 1 : 0;
 	}
 	fclose(f);
 }
@@ -301,6 +308,10 @@ static void joy_map_save(void) {
 	for (int slot = 0; slot < JOY_MAP_COUNT; slot++) {
 		if (joy_map[slot] >= 0)
 			fprintf(f, "%d %d\n", slot, joy_map[slot]);
+	}
+	for (int opt = 0; opt < JOY_OPT_COUNT; opt++) {
+		if (joy_opt[opt])
+			fprintf(f, "%d %d\n", JOY_MAP_COUNT + opt, joy_opt[opt]);
 	}
 	fclose(f);
 }
@@ -343,6 +354,19 @@ void PLAT_joystickMapRestoreSlot(int slot) {
 
 void PLAT_joystickMapRestoreAll(void) {
 	joy_map_factory();
+	for (int opt = 0; opt < JOY_OPT_COUNT; opt++)
+		joy_opt[opt] = 0;
+	joy_map_save();
+}
+
+int PLAT_joystickGetOption(int opt) {
+	return (opt >= 0 && opt < JOY_OPT_COUNT) ? joy_opt[opt] : 0;
+}
+
+void PLAT_joystickSetOption(int opt, int on) {
+	if (opt < 0 || opt >= JOY_OPT_COUNT)
+		return;
+	joy_opt[opt] = on ? 1 : 0;
 	joy_map_save();
 }
 
@@ -540,13 +564,33 @@ static void poll_sdl_input(uint32_t tick) {
 				pressed = val > 0;
 			}
 			else if (axis == AXIS_LX) {
-				pad.laxis.x = val;
-				PAD_setAnalog(BTN_ID_ANALOG_LEFT, BTN_ID_ANALOG_RIGHT, val, tick + PAD_REPEAT_DELAY);
+				if (joy_opt[JOY_OPT_INV_X])
+					val = -val;
+				if (joy_opt[JOY_OPT_STICK_DPAD]) {
+					pad.laxis.x = 0; // pure digital mode: no analog leak
+					apply_hat_axis(BTN_ID_DPAD_LEFT, BTN_ID_DPAD_RIGHT,
+							val > JOY_TRIG_DEADZONE ? 1 :
+							(val < -JOY_TRIG_DEADZONE ? -1 : 0), tick);
+				}
+				else {
+					pad.laxis.x = val;
+					PAD_setAnalog(BTN_ID_ANALOG_LEFT, BTN_ID_ANALOG_RIGHT, val, tick + PAD_REPEAT_DELAY);
+				}
 				continue;
 			}
 			else if (axis == AXIS_LY) {
-				pad.laxis.y = val;
-				PAD_setAnalog(BTN_ID_ANALOG_UP, BTN_ID_ANALOG_DOWN, val, tick + PAD_REPEAT_DELAY);
+				if (joy_opt[JOY_OPT_INV_Y])
+					val = -val;
+				if (joy_opt[JOY_OPT_STICK_DPAD]) {
+					pad.laxis.y = 0;
+					apply_hat_axis(BTN_ID_DPAD_UP, BTN_ID_DPAD_DOWN,
+							val > JOY_TRIG_DEADZONE ? 1 :
+							(val < -JOY_TRIG_DEADZONE ? -1 : 0), tick);
+				}
+				else {
+					pad.laxis.y = val;
+					PAD_setAnalog(BTN_ID_ANALOG_UP, BTN_ID_ANALOG_DOWN, val, tick + PAD_REPEAT_DELAY);
+				}
 				continue;
 			}
 			else if (axis == AXIS_RX) {

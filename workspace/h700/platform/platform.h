@@ -131,6 +131,10 @@ int  PLAT_joystickLastRaw(void);          // consume last external-pad raw press
 // raw id space: <JOY_AXIS_BASE = SDL button index; >= = axis binding
 // JOY_AXIS_BASE + axis*2 (+1 when negative direction fires the button)
 #define JOY_AXIS_BASE 1000
+// stick behaviour toggles, persisted in the same joymap.txt
+enum { JOY_OPT_INV_X = 0, JOY_OPT_INV_Y, JOY_OPT_STICK_DPAD, JOY_OPT_COUNT };
+int  PLAT_joystickGetOption(int opt);
+void PLAT_joystickSetOption(int opt, int on); // persists immediately
 #ifdef __cplusplus
 }
 #endif

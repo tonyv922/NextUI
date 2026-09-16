@@ -131,6 +131,23 @@ MenuList* buildJoystickMenu()
     for (const auto &r : rows)
         items.push_back(new JoyMapItem(r.slot, r.name));
 
+    // stick behaviour toggles (same widget pattern as the BT sample-rate row)
+    items.push_back(new MenuItem(ListItemType::Generic, "Stick invert X",
+            "Flips the left stick's horizontal direction.",
+            {0, 1}, {"Off", "On"},
+            []() -> std::any { return PLAT_joystickGetOption(JOY_OPT_INV_X); },
+            [](const std::any &v) { PLAT_joystickSetOption(JOY_OPT_INV_X, std::any_cast<int>(v)); }));
+    items.push_back(new MenuItem(ListItemType::Generic, "Stick invert Y",
+            "Flips the left stick's vertical direction.",
+            {0, 1}, {"Off", "On"},
+            []() -> std::any { return PLAT_joystickGetOption(JOY_OPT_INV_Y); },
+            [](const std::any &v) { PLAT_joystickSetOption(JOY_OPT_INV_Y, std::any_cast<int>(v)); }));
+    items.push_back(new MenuItem(ListItemType::Generic, "Stick acts as D-pad",
+            "Left stick sends digital directions instead of analog.\nUseful for games/consoles without analog support.",
+            {0, 1}, {"Off", "On"},
+            []() -> std::any { return PLAT_joystickGetOption(JOY_OPT_STICK_DPAD); },
+            [](const std::any &v) { PLAT_joystickSetOption(JOY_OPT_STICK_DPAD, std::any_cast<int>(v)); }));
+
     items.push_back(new MenuItem{ListItemType::Button, "Reset to defaults",
         "Resets all external-pad buttons to their default assignments.",
         ResetCurrentMenu});
