@@ -32,10 +32,15 @@ public:
     const std::string getLabel() const override
     {
         if (capturing)
-            return "press a button";
+            return "press a button/axis";
         int raw = PLAT_joystickMapSlotRaw(slot);
         if (raw < 0)
             return "None";
+        if (raw >= JOY_AXIS_BASE) {
+            // axis binding: 1000 + axis*2 (+1 = negative direction)
+            int v = raw - JOY_AXIS_BASE;
+            return "Axis " + std::to_string(v / 2) + (v & 1 ? "-" : "+");
+        }
         return "Button " + std::to_string(raw);
     }
 
