@@ -111,6 +111,38 @@ extern int needs_portrait_sdl; // DEVICE=rg28xx: SDL rotates onto the portrait p
 #define JOY_MINUS		15
 
 ///////////////////////////////
+// EXTERNAL PAD BUTTON REMAP
+// Maps SDL joystick button indices for external (Bluetooth) pads onto the
+// logical JOY_* layout above. The built-in panel keys use raw evdev and
+// are never affected. Persisted to USERDATA_PATH "/joymap.txt".
+// Indices below address one logical button slot each, shared with the
+// settings UI. All functions live in platform.c.
+#define HAS_JOY_MAP 1
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+int  PLAT_joystickMapSlotRaw(int slot);   // current binding for slot (-1 = none)
+int  PLAT_joystickMapSlotDefault(int slot); // factory binding for slot
+void PLAT_joystickMapSet(int slot, int raw); // bind slot to raw button, persists
+void PLAT_joystickMapRestoreSlot(int slot);  // one slot back to factory default
+void PLAT_joystickMapRestoreAll(void);       // whole table, persists
+int  PLAT_joystickLastRaw(void);          // consume last external-pad raw press (-1 if none)
+#ifdef __cplusplus
+}
+#endif
+
+// indices into the map, 1:1 with the table in platform.c
+enum {
+	JOY_MAP_UP = 0, JOY_MAP_DOWN, JOY_MAP_LEFT, JOY_MAP_RIGHT,
+	JOY_MAP_A, JOY_MAP_B, JOY_MAP_X, JOY_MAP_Y,
+	JOY_MAP_L1, JOY_MAP_R1, JOY_MAP_L2, JOY_MAP_R2, JOY_MAP_L3, JOY_MAP_R3,
+	JOY_MAP_SELECT, JOY_MAP_START, JOY_MAP_MENU, JOY_MAP_MENU_ALT, JOY_MAP_MENU_ALT2,
+	JOY_MAP_PLUS, JOY_MAP_MINUS, JOY_MAP_POWER,
+	JOY_MAP_COUNT,
+};
+
+///////////////////////////////
 // USER-ASSIGNABLE BUTTONS
 // H700 devices have no dedicated FN1/FN2/HOME buttons for pak launch actions.
 #define BTN_FN1			BTN_NONE
