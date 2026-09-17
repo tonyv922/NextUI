@@ -305,10 +305,9 @@ static void joy_map_save(void) {
 		LOG_error("failed to write %s: %s\n", path, strerror(errno));
 		return;
 	}
-	for (int slot = 0; slot < JOY_MAP_COUNT; slot++) {
-		if (joy_map[slot] >= 0)
-			fprintf(f, "%d %d\n", slot, joy_map[slot]);
-	}
+	// write the whole table so deliberately-cleared slots (-1) survive reboot
+	for (int slot = 0; slot < JOY_MAP_COUNT; slot++)
+		fprintf(f, "%d %d\n", slot, joy_map[slot]);
 	for (int opt = 0; opt < JOY_OPT_COUNT; opt++) {
 		if (joy_opt[opt])
 			fprintf(f, "%d %d\n", JOY_MAP_COUNT + opt, joy_opt[opt]);
@@ -350,6 +349,13 @@ void PLAT_joystickMapRestoreSlot(int slot) {
 	// compute factory value without clobbering the live table, then rebind
 	// through the normal exclusive path (unbinds conflicts + persists)
 	PLAT_joystickMapSet(slot, PLAT_joystickMapSlotDefault(slot));
+}
+
+void PLAT_joystickClearSlot(int slot) {
+	if (slot < 0 || slot >= JOY_MAP_COUNT)
+		return;
+	joy_map[slot] = -1; // deliberately unassigned; saved as -1, survives reboot
+	joy_map_save();
 }
 
 void PLAT_joystickMapRestoreAll(void) {
@@ -553,17 +559,12 @@ static void poll_sdl_input(uint32_t tick) {
 			if (apply_bound_axis(axis, val, tick))
 				continue; // axis consumed as button(s) by user remap
 
-			if (axis == AXIS_L2) {
-				btn = BTN_L2;
-				id = BTN_ID_L2;
-				pressed = val > 0;
-			}
-			else if (axis == AXIS_R2) {
-				btn = BTN_R2;
-				id = BTN_ID_R2;
-				pressed = val > 0;
-			}
-			else if (axis == AXIS_LX) {
+			// SDL joystick axis indices follow the external pad's standard
+			// layout (0/1 left stick, 2/3 right stick) — deliberately NOT
+			// the AXIS_* macros: those gate on dev_has_lstick/rstick which
+			// describe the BUILT-IN panel (RG SP has none) and would drop
+			// every external stick axis.
+			if (axis == 0) {
 				if (joy_opt[JOY_OPT_INV_X])
 					val = -val;
 				if (joy_opt[JOY_OPT_STICK_DPAD]) {
@@ -578,7 +579,7 @@ static void poll_sdl_input(uint32_t tick) {
 				}
 				continue;
 			}
-			else if (axis == AXIS_LY) {
+			else if (axis == 1) {
 				if (joy_opt[JOY_OPT_INV_Y])
 					val = -val;
 				if (joy_opt[JOY_OPT_STICK_DPAD]) {
@@ -593,12 +594,32 @@ static void poll_sdl_input(uint32_t tick) {
 				}
 				continue;
 			}
-			else if (axis == AXIS_RX) {
-				pad.raxis.x = val;
+			else if (axis == 2) {
+				if (joy_opt[JOY_OPT_INV_RX])
+					val = -val;
+				if (joy_opt[JOY_OPT_RSTICK_DPAD]) {
+					pad.raxis.x = 0; // digital mode: no analog leak
+					apply_hat_axis(BTN_ID_DPAD_LEFT, BTN_ID_DPAD_RIGHT,
+							val > JOY_TRIG_DEADZONE ? 1 :
+							(val < -JOY_TRIG_DEADZONE ? -1 : 0), tick);
+				}
+				else {
+					pad.raxis.x = val; // raxis carries aim/camera; no DPAD bits
+				}
 				continue;
 			}
-			else if (axis == AXIS_RY) {
-				pad.raxis.y = val;
+			else if (axis == 3) {
+				if (joy_opt[JOY_OPT_INV_RY])
+					val = -val;
+				if (joy_opt[JOY_OPT_RSTICK_DPAD]) {
+					pad.raxis.y = 0;
+					apply_hat_axis(BTN_ID_DPAD_UP, BTN_ID_DPAD_DOWN,
+							val > JOY_TRIG_DEADZONE ? 1 :
+							(val < -JOY_TRIG_DEADZONE ? -1 : 0), tick);
+				}
+				else {
+					pad.raxis.y = val;
+				}
 				continue;
 			}
 
