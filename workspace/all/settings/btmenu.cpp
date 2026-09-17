@@ -169,12 +169,11 @@ void Menu::updater()
         // Scan
         if (BT_enabled())
         {
-            if(!BT_discovering())
-                BT_discovery(true);
-
-            // FAST PATH: the paired list is a single bluetoothctl call, so the
-            // "Connect Bluetooth" entry renders immediately even if the scan
-            // below stalls on a slow or wedged bluetooth daemon.
+            // FAST PATH first: the paired list is a single bluetoothctl call.
+            // The discovery kick below can block for tens of seconds while
+            // bluetoothd cold-starts, so it must never delay this rebuild —
+            // otherwise the "Turn Bluetooth on first" placeholder from the
+            // off-state lingers while the toggle already reads On.
             std::map<std::string, BT_devicePaired> pairedMap;
             std::vector<BT_devicePaired> kl(SCAN_MAX_RESULTS);
             int known = BT_pairedDevices(kl.data(), SCAN_MAX_RESULTS);
@@ -260,7 +259,11 @@ void Menu::updater()
             }
 
             // SLOW PATH: full scan runs AFTER the menu above is already drawn.
-            // Each pass shells out per device, so only refresh every ~20s.
+            // Kick discovery here (can stall on a cold bluetoothd, but the
+            // menu is already correct by now). Each pass shells out per
+            // device, so only refresh every ~20s.
+            if(!BT_discovering())
+                BT_discovery(true);
             if (scanCycles <= 0)
             {
                 std::map<std::string, BT_device> fresh;
