@@ -113,6 +113,44 @@ static void capture_axis_edge(int axis, int val) {
 	}
 }
 
+// hat (d-pad) directions live in the same raw id space as buttons/axes:
+// JOY_HAT_BASE + hat*4 + dir (0=up 1=down 2=left 3=right). Consumption is
+// per-direction: binding hat-up only leaves down/left/right on their
+// factory D-pad behaviour.
+static void apply_button_state(int btn, int id, int pressed, uint32_t tick);
+static const Uint8 JOY_HAT_MASK[4] = { SDL_HAT_UP, SDL_HAT_DOWN, SDL_HAT_LEFT, SDL_HAT_RIGHT };
+static void apply_bound_hat(int hat_idx, Uint8 hat, uint32_t tick, Uint8 *consumed) {
+	*consumed = 0;
+	for (int slot = 0; slot < JOY_MAP_COUNT; slot++) {
+		int raw = joy_map[slot];
+		if (raw < JOY_HAT_BASE)
+			continue;
+		int v = raw - JOY_HAT_BASE;
+		if ((v >> 2) != hat_idx || (v & 3) >= 4)
+			continue;
+		int dir = v & 3;
+		*consumed |= JOY_HAT_MASK[dir];
+		apply_button_state(joy_map_btn[slot], joy_map_id[slot],
+				(hat & JOY_HAT_MASK[dir]) != 0, tick);
+	}
+}
+
+// capture: fresh hat direction (edge from neutral/other direction).
+// Only hat 0 is bindable — every pad we target exposes its d-pad there.
+static void capture_hat_edge(int hat_idx, Uint8 hat) {
+	static const struct { Uint8 mask; int dir; } dirs[4] = {
+		{ SDL_HAT_UP, 0 }, { SDL_HAT_DOWN, 1 }, { SDL_HAT_LEFT, 2 }, { SDL_HAT_RIGHT, 3 },
+	};
+	static Uint8 last_val = SDL_HAT_CENTERED;
+	if (hat_idx != 0)
+		return;
+	for (int i = 0; i < 4; i++) {
+		if ((hat & dirs[i].mask) && !(last_val & dirs[i].mask))
+			joy_last_raw = JOY_HAT_BASE + dirs[i].dir;
+	}
+	last_val = hat;
+}
+
 // RGB LEDs hang off an MCU on UART5, gated by the axp2202 mcu_pwr rail.
 // See led.c, which is included at the bottom of this file.
 #define H700_LED_TTY "/dev/ttyS5"
@@ -543,10 +581,28 @@ static void poll_sdl_input(uint32_t tick) {
 		}
 		else if (event.type == SDL_JOYHATMOTION) {
 			int hat = event.jhat.value;
-			apply_button_state(BTN_DPAD_UP, BTN_ID_DPAD_UP, hat & SDL_HAT_UP, tick);
-			apply_button_state(BTN_DPAD_DOWN, BTN_ID_DPAD_DOWN, hat & SDL_HAT_DOWN, tick);
-			apply_button_state(BTN_DPAD_LEFT, BTN_ID_DPAD_LEFT, hat & SDL_HAT_LEFT, tick);
-			apply_button_state(BTN_DPAD_RIGHT, BTN_ID_DPAD_RIGHT, hat & SDL_HAT_RIGHT, tick);
+			capture_hat_edge(event.jhat.hat, hat); // Settings > Joystick capture
+			Uint8 bound_mask = 0;
+			apply_bound_hat(event.jhat.hat, hat, tick, &bound_mask);
+			if (hat & SDL_HAT_UP & ~bound_mask)
+				apply_button_state(BTN_DPAD_UP, BTN_ID_DPAD_UP, 1, tick);
+			if (hat & SDL_HAT_DOWN & ~bound_mask)
+				apply_button_state(BTN_DPAD_DOWN, BTN_ID_DPAD_DOWN, 1, tick);
+			if (hat & SDL_HAT_LEFT & ~bound_mask)
+				apply_button_state(BTN_DPAD_LEFT, BTN_ID_DPAD_LEFT, 1, tick);
+			if (hat & SDL_HAT_RIGHT & ~bound_mask)
+				apply_button_state(BTN_DPAD_RIGHT, BTN_ID_DPAD_RIGHT, 1, tick);
+			// bound directions never fall through; directions just released
+			// by this event need a release on the factory path only if they
+			// were NOT bound (apply_button_state ignores stale releases)
+			if (!(hat & SDL_HAT_UP) && !(bound_mask & SDL_HAT_UP))
+				apply_button_state(BTN_DPAD_UP, BTN_ID_DPAD_UP, 0, tick);
+			if (!(hat & SDL_HAT_DOWN) && !(bound_mask & SDL_HAT_DOWN))
+				apply_button_state(BTN_DPAD_DOWN, BTN_ID_DPAD_DOWN, 0, tick);
+			if (!(hat & SDL_HAT_LEFT) && !(bound_mask & SDL_HAT_LEFT))
+				apply_button_state(BTN_DPAD_LEFT, BTN_ID_DPAD_LEFT, 0, tick);
+			if (!(hat & SDL_HAT_RIGHT) && !(bound_mask & SDL_HAT_RIGHT))
+				apply_button_state(BTN_DPAD_RIGHT, BTN_ID_DPAD_RIGHT, 0, tick);
 			continue;
 		}
 		else if (event.type == SDL_JOYAXISMOTION) {
