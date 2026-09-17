@@ -92,9 +92,34 @@ static volatile bool bt_discovering = false;
 static volatile bool bt_initialized = false;
 
 // Helper to run a command and capture output
+// bluetoothctl blocks on D-Bus while bluetoothd cold-starts (can be tens of
+// seconds, or forever if the daemon wedges) — that used to stall every menu
+// refresh behind it, leaving the "Turn Bluetooth on first" placeholder on
+// screen even with the toggle already On. Cap every call with `timeout`
+// (busybox applet on BaseOS; feature-detected once, falls back to raw cmd).
+static int bt_have_timeout = -1; // -1 unknown, 0 no, 1 yes
+
 static int bt_run_cmd(const char *cmd, char *output, size_t output_len) {
-	btlog("Running command: %s\n", cmd);
-	FILE *fp = popen(cmd, "r");
+	char tcmd[1152];
+	const char *use = cmd;
+
+	if (bt_have_timeout < 0) {
+		bt_have_timeout = 0;
+		FILE *probe = popen("command -v timeout >/dev/null 2>&1 && echo y", "r");
+		if (probe) {
+			char c = 0;
+			if (fread(&c, 1, 1, probe) == 1 && c == 'y')
+				bt_have_timeout = 1;
+			pclose(probe);
+		}
+	}
+	if (bt_have_timeout == 1) {
+		snprintf(tcmd, sizeof(tcmd), "timeout -s KILL 8 %s", cmd);
+		use = tcmd;
+	}
+
+	btlog("Running command: %s\n", use);
+	FILE *fp = popen(use, "r");
 	if (!fp) {
 		LOG_error("Failed to run command: %s\n", cmd);
 		return -1;
