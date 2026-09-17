@@ -149,6 +149,9 @@ bool key_compare(Map const &lhs, Map const &rhs)
 void Menu::updater()
 {
     int pollSecs = 15;
+    int discAge = 0; // ticks since discovery was (re)started; the stack's
+                     // scan self-stops after 60s but our flag stays true,
+                     // so re-arm it to keep finding NEW devices
     std::string lastPairedSig;
     std::map<std::string, BT_device> scanMap;
     bool scanValid = false; // scanMap holds real data from the stack
@@ -259,11 +262,16 @@ void Menu::updater()
             }
 
             // SLOW PATH: full scan runs AFTER the menu above is already drawn.
-            // Kick discovery here (can stall on a cold bluetoothd, but the
-            // menu is already correct by now). Each pass shells out per
-            // device, so only refresh every ~20s.
-            if(!BT_discovering())
+            // Each pass shells out per device, so only refresh every ~20s.
+            // The stack's scan self-stops after 60s but our flag stays set
+            // (and one started before this menu opened is long dead), so
+            // re-arm periodically — otherwise NEW devices never surface and
+            // nothing can be paired for the first time.
+            if (discAge <= 0 || !BT_discovering()) {
                 BT_discovery(true);
+                discAge = 28; // ~56s at the 2s poll: beat the auto-stop
+            }
+            discAge--;
             if (scanCycles <= 0)
             {
                 std::map<std::string, BT_device> fresh;
