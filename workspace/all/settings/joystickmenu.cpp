@@ -36,6 +36,11 @@ public:
         int raw = PLAT_joystickMapSlotRaw(slot);
         if (raw < 0)
             return "None";
+        if (raw >= JOY_HAT_BASE) {
+            static const char *hatDir[4] = { "up", "down", "left", "right" };
+            int dir = (raw - JOY_HAT_BASE) & 3;
+            return std::string("Hat ") + hatDir[dir];
+        }
         if (raw >= JOY_AXIS_BASE) {
             // axis binding: 1000 + axis*2 (+1 = negative direction)
             int v = raw - JOY_AXIS_BASE;
