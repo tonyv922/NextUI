@@ -149,6 +149,11 @@ bool key_compare(Map const &lhs, Map const &rhs)
 void Menu::updater()
 {
     int pollSecs = 15;
+    std::string lastPairedSig;
+    std::map<std::string, BT_device> scanMap;
+    bool scanValid = false; // scanMap holds real data from the stack
+    bool scanDirty = false; // scan changed, needs rebuild once submenu closes
+    int scanCycles = 0;     // countdown until next slow scan refresh
 
     while (!quit && !globalQuit)
     {
@@ -164,22 +169,21 @@ void Menu::updater()
         // Scan
         if (BT_enabled())
         {
-            if(!BT_discovering())
-                BT_discovery(true);
-
+            // FAST PATH first: the paired list is a single bluetoothctl call.
+            // The discovery kick below can block for tens of seconds while
+            // bluetoothd cold-starts, so it must never delay this rebuild —
+            // otherwise the "Turn Bluetooth on first" placeholder from the
+            // off-state lingers while the toggle already reads On.
             std::map<std::string, BT_devicePaired> pairedMap;
             std::vector<BT_devicePaired> kl(SCAN_MAX_RESULTS);
             int known = BT_pairedDevices(kl.data(), SCAN_MAX_RESULTS);
+            std::string pairedSig;
             for (int i = 0; i < known; i++)
-                pairedMap.emplace(kl[i].remote_addr, kl[i]);  // Use MAC address as key (unique)
-
-            // grab list and compare it to previous result
-            // only relayout the menu if changes happended
-            std::map<std::string, BT_device> scanMap;
-            std::vector<BT_device> sr(SCAN_MAX_RESULTS);
-            int cnt = BT_availableDevices(sr.data(), SCAN_MAX_RESULTS);
-            for (int i = 0; i < cnt; i++)
-                scanMap.emplace(sr[i].name, sr[i]);
+            {
+                pairedMap.emplace(kl[i].remote_addr, kl[i]); // Use MAC address as key (unique)
+                pairedSig += kl[i].remote_addr;
+                pairedSig += ';';
+            }
 
             // dont repopulate if any submenu is open
             bool menuOpen = false;
@@ -192,8 +196,9 @@ void Menu::updater()
                 }
             }
 
-            // something changed?
-            if (!menuOpen)
+            // rebuild when paired list changed or a scan result is pending
+            bool pairedChanged = pairedSig != lastPairedSig;
+            if (!menuOpen && (pairedChanged || !scanValid || scanDirty))
             {
                 // remember selection and restore
                 std::string selectedName;
@@ -208,35 +213,41 @@ void Menu::updater()
                     if (rateItem) items.push_back(rateItem);
                     layout_called = false;
 
+                    // "Connect Bluetooth" entry: drill into the paired device list,
+                    // where A connects/disconnects a device directly.
+                    std::string entryName = pairedMap.empty()
+                                                ? std::string("Connect Bluetooth")
+                                                : "Connect Bluetooth (" + std::to_string(pairedMap.size()) + ")";
+                    MenuList *pairedOptions;
+                    if (pairedMap.empty())
+                    {
+                        pairedOptions = new MenuList(MenuItemType::List, entryName, {
+                            new MenuItem(ListItemType::Button, "No paired devices", "Pair a device from the list below first."),
+                        });
+                    }
+                    else
+                    {
+                        std::vector<AbstractMenuItem *> quickItems;
+                        for (auto &[s, r] : pairedMap)
+                            quickItems.push_back(new QuickConnectItem(r, selectionDirty));
+                        pairedOptions = new MenuList(MenuItemType::List, entryName, quickItems);
+                    }
+                    items.push_back(new MenuItem(ListItemType::Button, entryName, "Paired devices - press A to connect", DeferToSubmenu, pairedOptions));
+
+                    // then scan results, skipping anything already paired (match by MAC).
+                    // Empty on the very first pass; fills in once the slow scan lands.
                     for (auto &[s, r] : scanMap)
                     {
+                        if (pairedMap.count(r.addr))
+                            continue;
                         MenuList *options;
                         options = new MenuList(MenuItemType::List, "Options", {new PairNewItem(r, selectionDirty)});
                         auto itm = new PairableItem{r, options};
                         items.push_back(itm);
                     }
 
-                    for (auto &[s, r] : pairedMap)
-                    {
-                        MenuList *options;
-                        if (r.is_connected)
-                        {
-                            options = new MenuList(MenuItemType::List, "Options", {
-                                                                                    new DisconnectKnownItem(r, selectionDirty),
-                                                                                    new UnpairItem(r, selectionDirty),
-                                                                                });
-                        }
-                        else
-                        {
-                            options = new MenuList(MenuItemType::List, "Options", {
-                                                                                    new ConnectKnownItem(r, selectionDirty),
-                                                                                    new UnpairItem(r, selectionDirty),
-                                                                                });
-                        }
-                        auto itm = new PairedItem{r, options};
-                        itm->setDesc(std::string(r.remote_addr) + " | " + std::to_string(r.rssi));
-                        items.push_back(itm);
-                    }
+                    if (pairedChanged) lastPairedSig = pairedSig;
+                    if (scanDirty) scanDirty = false;
                 }
                 MenuList::performLayout((SDL_Rect){0, 0, FIXED_WIDTH, FIXED_HEIGHT});
 
@@ -246,6 +257,31 @@ void Menu::updater()
                 // If selection was restored, we already called performLayout internally
                 selectionDirty |= !selectionApplied;
             }
+
+            // SLOW PATH: full scan runs AFTER the menu above is already drawn.
+            // Kick discovery here (can stall on a cold bluetoothd, but the
+            // menu is already correct by now). Each pass shells out per
+            // device, so only refresh every ~20s.
+            if(!BT_discovering())
+                BT_discovery(true);
+            if (scanCycles <= 0)
+            {
+                std::map<std::string, BT_device> fresh;
+                std::vector<BT_device> sr(SCAN_MAX_RESULTS);
+                int cnt = BT_availableDevices(sr.data(), SCAN_MAX_RESULTS);
+                for (int i = 0; i < cnt; i++)
+                    fresh.emplace(sr[i].addr, sr[i]);
+
+                bool first = !scanValid;
+                scanValid = true;
+                scanCycles = 10; // ~20s at the 2s poll below
+                if (first || !key_compare(fresh, scanMap))
+                {
+                    scanMap = fresh;
+                    scanDirty = true; // picked up by the next fast tick
+                }
+            }
+            scanCycles--;
             pollSecs = 2;
         }
         else
@@ -259,6 +295,12 @@ void Menu::updater()
             layout_called = false;
             selectionDirty = true;
             pollSecs = 15;
+            // stale once BT is back off, force a fresh pass on next enable
+            lastPairedSig.clear();
+            scanMap.clear();
+            scanValid = false;
+            scanDirty = false;
+            scanCycles = 0;
         }
 
         // reset selection scope (locks internally)
@@ -419,4 +461,61 @@ void PairedItem::drawCustomItem(SDL_Surface *surface, const SDL_Rect &dst, const
     text = TTF_RenderUTF8_Blended(font.small, item.getName().c_str(), text_color);
     SDL_BlitSurfaceCPP(text, {}, surface, {dst.x + SCALE1(OPTION_PADDING), dst.y + SCALE1(1)});
     SDL_FreeSurface(text);
+}
+
+///////////////////////////////////////////////////////////
+// "Connect Bluetooth" submenu rows
+
+QuickConnectItem::QuickConnectItem(BT_devicePaired d, bool &dirty)
+    : MenuItem(ListItemType::Button, "", "", nullptr, nullptr), dev(d), dirty(dirty)
+{
+    baseName = dev.remote_name[0] ? std::string(dev.remote_name) : std::string(dev.remote_addr);
+    refreshName();
+}
+
+void QuickConnectItem::refreshName()
+{
+    name = baseName + (dev.is_connected ? " (connected)" : "");
+    desc = std::string(dev.remote_addr) + " | A: " + (dev.is_connected ? "disconnect" : "connect");
+}
+
+InputReactionHint QuickConnectItem::handleInput(int &dirtyFlag)
+{
+    if (PAD_justPressed(BTN_A))
+    {
+        if (dev.is_connected)
+        {
+            BT_disconnect(dev.remote_addr);
+        }
+        else
+        {
+            ScopedOverlay overlay("Connecting...");
+            BT_connect(dev.remote_addr);
+        }
+        // re-read our own state so the row updates immediately without
+        // leaving the submenu (updater() won't rebuild while it's open)
+        std::vector<BT_devicePaired> kl(SCAN_MAX_RESULTS);
+        int known = BT_pairedDevices(kl.data(), SCAN_MAX_RESULTS);
+        for (int i = 0; i < known; i++)
+        {
+            if (std::string(kl[i].remote_addr) == std::string(dev.remote_addr))
+            {
+                dev = kl[i];
+                break;
+            }
+        }
+        refreshName();
+        dirty = true;
+        dirtyFlag = 1;
+        return NoOp;
+    }
+    else if (PAD_justPressed(BTN_X))
+    {
+        BT_unpair(dev.remote_addr);
+        dirty = true;
+        dirtyFlag = 1;
+        // close the submenu; the main list rebuilds and refreshes the count
+        return Exit;
+    }
+    return MenuItem::handleInput(dirtyFlag);
 }
