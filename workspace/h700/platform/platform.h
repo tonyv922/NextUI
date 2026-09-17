@@ -127,12 +127,17 @@ int  PLAT_joystickMapSlotDefault(int slot); // factory binding for slot
 void PLAT_joystickMapSet(int slot, int raw); // bind slot to raw button, persists
 void PLAT_joystickMapRestoreSlot(int slot);  // one slot back to factory default
 void PLAT_joystickMapRestoreAll(void);       // whole table, persists
+void PLAT_joystickClearSlot(int slot);       // unassign one slot (stays unassigned)
 int  PLAT_joystickLastRaw(void);          // consume last external-pad raw press (-1 if none)
 // raw id space: <JOY_AXIS_BASE = SDL button index; >= = axis binding
 // JOY_AXIS_BASE + axis*2 (+1 when negative direction fires the button)
 #define JOY_AXIS_BASE 1000
 // stick behaviour toggles, persisted in the same joymap.txt
-enum { JOY_OPT_INV_X = 0, JOY_OPT_INV_Y, JOY_OPT_STICK_DPAD, JOY_OPT_COUNT };
+enum {
+	JOY_OPT_INV_X = 0, JOY_OPT_INV_Y, JOY_OPT_STICK_DPAD,
+	JOY_OPT_INV_RX, JOY_OPT_INV_RY, JOY_OPT_RSTICK_DPAD,
+	JOY_OPT_COUNT,
+};
 int  PLAT_joystickGetOption(int opt);
 void PLAT_joystickSetOption(int opt, int on); // persists immediately
 #ifdef __cplusplus

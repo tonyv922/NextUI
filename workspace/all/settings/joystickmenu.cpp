@@ -23,7 +23,7 @@ class JoyMapItem : public MenuItem
 public:
     JoyMapItem(int s, const std::string &buttonName)
         : MenuItem(ListItemType::Generic, buttonName,
-                "A: assign, B: cancel, X: default",
+                "A: assign, B: cancel, X: default, Y: delete",
                 std::vector<std::any>{0}, std::vector<std::string>{""},
                 nullptr, nullptr,
                 [this]() { PLAT_joystickMapRestoreSlot(slot); }),
@@ -67,6 +67,14 @@ public:
             }
             if (PAD_justPressed(BTN_A))
                 return NoOp;
+            // Y inside capture clears the slot outright (delete without re-press)
+            if (PAD_justPressed(BTN_Y))
+            {
+                PLAT_joystickClearSlot(slot);
+                capturing = false;
+                dirty = 1;
+                return NoOp;
+            }
             // moving the cursor away ends capture
             if (PAD_justPressed(BTN_UP) || PAD_justPressed(BTN_DOWN) ||
                 PAD_justPressed(BTN_LEFT) || PAD_justPressed(BTN_RIGHT))
@@ -81,6 +89,12 @@ public:
         if (PAD_justPressed(BTN_X))
         {
             PLAT_joystickMapRestoreSlot(slot);
+            dirty = 1;
+            return NoOp;
+        }
+        if (PAD_justPressed(BTN_Y))
+        {
+            PLAT_joystickClearSlot(slot); // unassign: slot fires nothing
             dirty = 1;
             return NoOp;
         }
@@ -147,6 +161,21 @@ MenuList* buildJoystickMenu()
             {0, 1}, {"Off", "On"},
             []() -> std::any { return PLAT_joystickGetOption(JOY_OPT_STICK_DPAD); },
             [](const std::any &v) { PLAT_joystickSetOption(JOY_OPT_STICK_DPAD, std::any_cast<int>(v)); }));
+    items.push_back(new MenuItem(ListItemType::Generic, "Right stick invert X",
+            "Flips the right stick's horizontal direction.",
+            {0, 1}, {"Off", "On"},
+            []() -> std::any { return PLAT_joystickGetOption(JOY_OPT_INV_RX); },
+            [](const std::any &v) { PLAT_joystickSetOption(JOY_OPT_INV_RX, std::any_cast<int>(v)); }));
+    items.push_back(new MenuItem(ListItemType::Generic, "Right stick invert Y",
+            "Flips the right stick's vertical direction.",
+            {0, 1}, {"Off", "On"},
+            []() -> std::any { return PLAT_joystickGetOption(JOY_OPT_INV_RY); },
+            [](const std::any &v) { PLAT_joystickSetOption(JOY_OPT_INV_RY, std::any_cast<int>(v)); }));
+    items.push_back(new MenuItem(ListItemType::Generic, "Right stick acts as D-pad",
+            "Right stick sends digital directions instead of analog.\nSame as the left-stick option, for the right stick.",
+            {0, 1}, {"Off", "On"},
+            []() -> std::any { return PLAT_joystickGetOption(JOY_OPT_RSTICK_DPAD); },
+            [](const std::any &v) { PLAT_joystickSetOption(JOY_OPT_RSTICK_DPAD, std::any_cast<int>(v)); }));
 
     items.push_back(new MenuItem{ListItemType::Button, "Reset to defaults",
         "Resets all external-pad buttons to their default assignments.",
