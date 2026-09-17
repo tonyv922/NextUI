@@ -2,6 +2,8 @@
 
 #include "menu.hpp"
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 
 namespace Bluetooth
 {
@@ -17,10 +19,17 @@ namespace Bluetooth
         MenuItem *diagItem;
         // max sample rate
         MenuItem *rateItem = nullptr;
+        // "Connect Bluetooth" placeholder shown while BT is off
+        MenuItem *offEntryItem = nullptr;
         
         std::thread worker;
         bool quit = false;
         bool selectionDirty = false;
+        // wakes the updater right after the on/off toggle so the
+        // "Connect Bluetooth" entry appears without waiting a poll cycle
+        std::mutex wakeLock;
+        std::condition_variable wakeCv;
+        unsigned wakeGen = 0;
         
         PairingAgent* pairingAgent = nullptr;
     public:

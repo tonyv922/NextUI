@@ -34,6 +34,15 @@ Menu::Menu(const int &globalQuit, int &globalDirty) : MenuList(MenuItemType::Fix
                               std::bind(&Menu::resetSamplerateMaximum, this));
     items.push_back(rateItem);
 
+    // show the entry from the first frame, even while Bluetooth is off:
+    // it says so instead of hiding, so users don't hunt for it (tonio UX note)
+    offEntryItem = new MenuItem(ListItemType::Button, "Connect Bluetooth",
+            "Turn Bluetooth on first.", DeferToSubmenu,
+            new MenuList(MenuItemType::List, "Connect Bluetooth", {
+                new MenuItem(ListItemType::Button, "Bluetooth is off",
+                        "Enable Bluetooth above to connect paired devices."),
+            }));
+    items.push_back(offEntryItem);
     // best effort layout based on the platform defines, user should really call performLayout manually
     MenuList::performLayout((SDL_Rect){0, 0, FIXED_WIDTH, FIXED_HEIGHT});
     layout_called = false;
@@ -50,7 +59,11 @@ Menu::Menu(const int &globalQuit, int &globalDirty) : MenuList(MenuItemType::Fix
 
 Menu::~Menu()
 {
-    quit = true;
+    {
+        std::lock_guard<std::mutex> lk(wakeLock);
+        quit = true;
+    }
+    wakeCv.notify_all(); // don't sit out the remaining sleep on exit
     if (worker.joinable())
         worker.join();
 
@@ -82,6 +95,12 @@ void Menu::setBtToggleState(const std::any &on)
     auto state = std::any_cast<bool>(on);
     ScopedOverlay overlay(state ? "Enabling Bluetooth..." : "Disabling Bluetooth...");
     BT_enable(state);
+    // don't make the updater wait out its poll cycle to reflect the entry
+    {
+        std::lock_guard<std::mutex> lk(wakeLock);
+        wakeGen++;
+    }
+    wakeCv.notify_all();
 }
 
 void Menu::resetBtToggleState()
@@ -133,6 +152,13 @@ void Menu::updater()
 
     while (!quit && !globalQuit)
     {
+        // snapshot before doing work: a toggle landing mid-iteration must
+        // still cut the sleep short at the end of this pass
+        unsigned genTop;
+        {
+            std::lock_guard<std::mutex> lk(wakeLock);
+            genTop = wakeGen;
+        }
         // TODO: pause when menu is not rendered
         // TODO: improve repaint logic in a way that remembers selection
         // Scan
@@ -229,6 +255,7 @@ void Menu::updater()
             items.push_back(toggleItem);
             items.push_back(diagItem);
             if (rateItem) items.push_back(rateItem);
+            if (offEntryItem) items.push_back(offEntryItem);
             layout_called = false;
             selectionDirty = true;
             pollSecs = 15;
@@ -241,7 +268,13 @@ void Menu::updater()
             selectionDirty = false;
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(pollSecs));
+        // interruptible wait: the on/off callback bumps wakeGen so a toggle
+        // (or app quit) lands on screen immediately, not up to pollSecs later
+        {
+            std::unique_lock<std::mutex> lk(wakeLock);
+            wakeCv.wait_for(lk, std::chrono::seconds(pollSecs),
+                    [this, genTop] { return quit || wakeGen != genTop; });
+        }
     }
 }
 
