@@ -74,6 +74,21 @@ namespace Bluetooth
         void drawCustomItem(SDL_Surface *surface, const SDL_Rect &dst, const AbstractMenuItem &item, bool selected) const override;
     };
 
+    // one row in the "Connect Bluetooth" list: A connects/disconnects directly, X forgets
+    class QuickConnectItem : public MenuItem
+    {
+        BT_devicePaired dev;
+        std::string baseName;
+        bool &dirty;
+
+        void refreshName();
+
+    public:
+        QuickConnectItem(BT_devicePaired d, bool &dirty);
+
+        InputReactionHint handleInput(int &dirtyFlag) override;
+    };
+
     class ConnectKnownItem : public MenuItem
     {
         BT_devicePaired dev;
